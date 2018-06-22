@@ -33,6 +33,7 @@
 #include <vector>
 
 #include <fcntl.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
@@ -95,7 +96,8 @@ struct Context {
   std::vector<char const *> results;
   std::atomic<std::size_t> taken_cases, finished_cases;
   std::atomic<std::size_t> pass_count, fail_count, skip_count, crash_count,
-      undetermined_count;
+      timeout_count, undetermined_count;
+  double timeout = 60.0;
 
   Context() {
     pass_count = 0;
@@ -106,13 +108,106 @@ struct Context {
   }
 };
 
+class Line_reader {
+public:
+  ~Line_reader();
+
+  void set_fd(int fd);
+
+  enum read_status {
+    SUCCESS,
+    PARTIAL,
+    END,
+    TIMEOUT,
+    FAIL
+
+  };
+
+  read_status read(char **text, double timeout);
+
+private:
+  int fd_ = -1;
+  std::array<char, 4096> buf_;
+  int valid_sz_ = 0;
+  int skip_sz_ = 0;
+};
+
+Line_reader::~Line_reader() {
+  if (fd_ >= 0)
+    close(fd_);
+}
+
+void Line_reader::set_fd(int fd) {
+  if (fd_ >= 0)
+    close(fd_);
+  fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
+  fd_ = fd;
+  valid_sz_ = 0;
+}
+
+Line_reader::read_status Line_reader::read(char **text, double timeout) {
+  assert(fd_ >= 0);
+
+  if (skip_sz_) {
+    valid_sz_ -= skip_sz_;
+    std::memmove(buf_.data(), buf_.data() + skip_sz_, valid_sz_);
+    skip_sz_ = 0;
+  }
+
+  char *newline;
+  bool end = false;
+  while (!(newline = (char *)std::memchr(buf_.data(), '\n', valid_sz_)) &&
+         !end && valid_sz_ + 1 < (int)buf_.size()) {
+    for (;;) {
+      struct pollfd p = {};
+      p.fd = fd_;
+      p.events = POLLIN | POLLHUP;
+
+      int r = poll(&p, 1, (int)(timeout * 1000.0));
+      if (r > 0)
+        break;
+      else if (r == 0)
+        return TIMEOUT;
+      else if (r < 0 && (errno == EINTR || errno == EAGAIN))
+        continue;
+      else
+        return FAIL;
+    }
+    for (;;) {
+      ssize_t r =
+          ::read(fd_, buf_.data() + valid_sz_, buf_.size() - 1 - valid_sz_);
+      if (r >= 0) {
+        valid_sz_ += r;
+        end = r == 0;
+        break;
+      } else if (r < 0 && errno == EAGAIN)
+        break;
+      else if (r < 0 && errno != EINTR)
+        return FAIL;
+    }
+  }
+
+  if (newline) {
+    skip_sz_ = newline - buf_.data() + 1;
+    *newline = 0;
+    *text = buf_.data();
+    return SUCCESS;
+  } else {
+    buf_[valid_sz_] = 0;
+    skip_sz_ = valid_sz_;
+    *text = buf_.data();
+    return end ? END : PARTIAL;
+  }
+}
+
 bool process_block(Context &ctx, unsigned thread_id) {
   std::size_t base_idx, count;
   do {
     base_idx = ctx.taken_cases.load();
     if (base_idx >= ctx.test_cases.size())
       return false;
-    count = std::min<std::size_t>(std::max<std::size_t>((ctx.test_cases.size() - base_idx) / 32, 1), 128);
+    count = std::min<std::size_t>(
+        std::max<std::size_t>((ctx.test_cases.size() - base_idx) / 32, 1), 128);
 
   } while (
       !ctx.taken_cases.compare_exchange_strong(base_idx, base_idx + count));
@@ -121,15 +216,16 @@ bool process_block(Context &ctx, unsigned thread_id) {
                          std::to_string(thread_id);
   std::string dir = boost::filesystem::path{ctx.deqp}.parent_path().native();
   std::size_t idx = 0, test_idx = 0;
-  FILE *f = NULL;
-  int fd[2];
-  char buf[4096];
+  Line_reader reader;
+  bool start = true;
+  bool test_active = false;
   std::unordered_map<std::string, unsigned> indices;
   for (std::size_t i = 0; i < count; ++i)
     indices.insert({ctx.test_cases[base_idx + i], base_idx + i});
 
   while (idx < count) {
-    if (!f) {
+    if (start) {
+      int fd[2];
       std::string arg = "--deqp-caselist-file=" + filename;
       std::ofstream out(filename);
       for (auto &&e : indices)
@@ -148,50 +244,72 @@ bool process_block(Context &ctx, unsigned thread_id) {
               "--deqp-log-filename=/dev/null", (char *)NULL);
       }
       close(fd[1]);
-      f = fdopen(fd[0], "r");
-      if (!f)
-        std::abort();
+      reader.set_fd(fd[0]);
+      start = false;
+      test_active = false;
     }
-    auto r = fgets(buf, 4096, f);
-    if (!r || strncmp(buf, "DONE!", 5) == 0) {
-      fclose(f);
-      f = NULL;
-      ctx.results[test_idx] = "Crash";
-      //std::cerr << "\'" << ctx.test_cases[test_idx] << "\' crashed" << std::endl; 
-      ++ctx.crash_count;
-      ++idx;
-    } else if (strncmp(buf, "  NotSupported", 14) == 0) {
+    char *line = NULL;
+    auto r = reader.read(&line, ctx.timeout);
+
+    if (r == Line_reader::FAIL) {
+      abort();
+    } else if (r == Line_reader::TIMEOUT) {
+      start = true;
+      if (test_active) {
+        ctx.results[test_idx] = "Timeout";
+        ++ctx.timeout_count;
+        ++idx;
+        test_active = false;
+      }
+    } else if (r == Line_reader::END || strncmp(line, "DONE!", 5) == 0) {
+      start = true;
+      if (test_active) {
+        ctx.results[test_idx] = "Crash";
+        ++ctx.crash_count;
+        ++idx;
+        test_active = false;
+      }
+    } else if (strncmp(line, "  NotSupported", 14) == 0) {
+      assert(test_active);
+      test_active = false;
       ctx.results[test_idx] = "Skip";
       ++idx;
       ++ctx.skip_count;
-    } else if (strncmp(buf, "  Fail", 6) == 0) {
+    } else if (strncmp(line, "  Fail", 6) == 0) {
+      assert(test_active);
+      test_active = false;
       ctx.results[test_idx] = "Fail";
       ++idx;
       ++ctx.fail_count;
-    } else if (strncmp(buf, "  Pass", 6) == 0 ||
-               strncmp(buf, "  CompatibilityWarning", 22) == 0) {
+    } else if (strncmp(line, "  Pass", 6) == 0 ||
+               strncmp(line, "  CompatibilityWarning", 22) == 0) {
+      assert(test_active);
+      test_active = false;
       ctx.results[test_idx] = "Pass";
       ++idx;
       ++ctx.pass_count;
-    } else if (strncmp(buf, "Test case '", 11) == 0) {
+    } else if (strncmp(line, "Test case '", 11) == 0) {
       if (indices.size() + idx != count) {
+        assert(test_active);
+        test_active = false;
         ctx.results[test_idx] = "Undetermined";
         ++idx;
         ++ctx.undetermined_count;
       }
-      auto len = strlen(buf) - 4;
-      auto name = std::string(buf + 11, buf + len);
+      auto len = strlen(line) - 3;
+      auto name = std::string(line + 11, line + len);
       auto it = indices.find(name);
-      if (it == indices.end())
+      if (it == indices.end()) {
         abort();
+      }
       test_idx = it->second;
       indices.erase(it);
+      test_active = true;
     }
   }
-  if (f)
-    fclose(f);
-  if (!indices.empty())
+  if (!indices.empty()) {
     abort();
+  }
   unlink(filename.c_str());
   ctx.finished_cases += count;
   return true;
@@ -229,8 +347,9 @@ void update(Context &ctx) {
   std::size_t skip_count = ctx.skip_count;
   std::size_t crash_count = ctx.crash_count;
   std::size_t undetermined_count = ctx.undetermined_count;
-  std::size_t total =
-      pass_count + fail_count + skip_count + crash_count + undetermined_count;
+  std::size_t timeout_count = ctx.timeout_count;
+  std::size_t total = pass_count + fail_count + skip_count + crash_count +
+                      undetermined_count + timeout_count;
 
   std::chrono::time_point<std::chrono::steady_clock> current_time =
       std::chrono::steady_clock::now();
@@ -243,6 +362,7 @@ void update(Context &ctx) {
   std::cout << " Skip: " << skip_count;
   std::cout << " Crash: " << crash_count;
   std::cout << " Undetermined: " << undetermined_count;
+  std::cout << " Timeout: " << timeout_count;
   std::cout << " Duration: " << format_duration(duration.count());
   if (total) {
     std::cout << " Remaining: "
@@ -306,6 +426,9 @@ int main(int argc, char *argv[]) {
   else
     ctx.test_cases = parse_testcase_file(args.find("caselist")->second);
 
+  if (args.find("timeout") != args.end())
+    ctx.timeout = strtof(args.find("timeout")->second.c_str(), NULL);
+
   std::mt19937 rng;
   std::shuffle(ctx.test_cases.begin(), ctx.test_cases.end(), rng);
   ctx.results.resize(ctx.test_cases.size());
@@ -316,6 +439,7 @@ int main(int argc, char *argv[]) {
   ctx.fail_count = 0;
   ctx.skip_count = 0;
   ctx.crash_count = 0;
+  ctx.timeout_count = 0;
   ctx.start_time = std::chrono::steady_clock::now();
   std::vector<std::thread> threads;
   for (unsigned i = 0; i < thread_count; ++i) {
