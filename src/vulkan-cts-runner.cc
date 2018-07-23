@@ -143,6 +143,7 @@ void Line_reader::set_fd(int fd) {
   fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
   fd_ = fd;
   valid_sz_ = 0;
+  skip_sz_ = 0;
 }
 
 Line_reader::read_status Line_reader::read(char **text, double timeout) {
