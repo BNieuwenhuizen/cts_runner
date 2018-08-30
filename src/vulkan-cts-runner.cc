@@ -283,7 +283,8 @@ bool process_block(Context &ctx, unsigned thread_id) {
       ++idx;
       ++ctx.fail_count;
     } else if (strncmp(line, "  Pass", 6) == 0 ||
-               strncmp(line, "  CompatibilityWarning", 22) == 0) {
+               strncmp(line, "  CompatibilityWarning", 22) == 0 ||
+               strncmp(line, "  QualityWarning", 16) == 0) {
       assert(test_active);
       test_active = false;
       ctx.results[test_idx] = "Pass";
