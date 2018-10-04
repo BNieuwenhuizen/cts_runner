@@ -435,10 +435,14 @@ int main(int argc, char *argv[]) {
   if (args.find("timeout") != args.end())
     ctx.timeout = strtof(args.find("timeout")->second.c_str(), NULL);
 
+  int job = 0;
+  if (args.find("job") != args.end())
+    job = strtol(args.find("job")->second.c_str(), NULL, 10);
+
   std::mt19937 rng;
   std::shuffle(ctx.test_cases.begin(), ctx.test_cases.end(), rng);
   ctx.results.resize(ctx.test_cases.size());
-  auto thread_count = std::thread::hardware_concurrency();
+  auto thread_count = job > 0 ? job : std::thread::hardware_concurrency();
   ctx.taken_cases = 0;
   ctx.finished_cases = 0;
   ctx.pass_count = 0;
