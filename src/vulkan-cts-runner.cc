@@ -242,6 +242,10 @@ bool process_block(Context &ctx, unsigned thread_id) {
         if (chdir(dir.c_str()))
           throw - 1;
         execl(ctx.deqp.c_str(), ctx.deqp.c_str(), arg.c_str(),
+              "--deqp-log-images=disable",
+              "--deqp-log-shader-sources=disable",
+              "--deqp-log-flush=disable",
+              "--deqp-shadercache=disable",
               "--deqp-log-filename=/dev/null", (char *)NULL);
       }
       close(fd[1]);
