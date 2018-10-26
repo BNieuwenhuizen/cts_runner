@@ -39,10 +39,25 @@
 #include <string.h>
 #include <unistd.h>
 #include <unordered_map>
+#include <regex>
 
 #include <boost/filesystem.hpp>
+#include <boost/algorithm/string/split.hpp>
 
-std::vector<std::string> parse_testcase_file(std::string const &filename) {
+bool is_excluded_test(std::string const &testname,
+                      const std::vector<std::regex> &excluded_tests)
+
+{
+  std::vector<std::regex>::const_iterator it;
+  for (it = excluded_tests.begin(); it != excluded_tests.end(); ++it) {
+    if (regex_match(testname, *it))
+      return true;
+  }
+  return false;
+}
+
+std::vector<std::string> parse_testcase_file(std::string const &filename,
+                                             const std::vector<std::regex> &excluded_tests) {
   std::vector<std::string> cases;
   std::ifstream in(filename);
   if (!in.is_open()) {
@@ -52,12 +67,15 @@ std::vector<std::string> parse_testcase_file(std::string const &filename) {
   }
 
   std::string line;
-  while (std::getline(in, line))
-    cases.push_back(line);
+  while (std::getline(in, line)) {
+    if (!is_excluded_test(line, excluded_tests))
+      cases.push_back(line);
+  }
   return cases;
 }
 
-std::vector<std::string> get_testcases(std::string const &deqp) {
+std::vector<std::string> get_testcases(std::string const &deqp,
+                                       const std::vector<std::regex> &excluded_tests) {
   std::string dir = boost::filesystem::path{deqp}.parent_path().native();
   FILE *f;
   char buf[4096];
@@ -82,7 +100,10 @@ std::vector<std::string> get_testcases(std::string const &deqp) {
   while (fgets(buf, 4096, f)) {
     if (strncmp(buf, "TEST: ", 6) == 0) {
       auto len = strlen(buf);
-      cases.push_back(std::string(buf + 6, buf + len - 1));
+      std::string testname = std::string(buf + 6, buf + len - 1);
+
+      if (!is_excluded_test(testname, excluded_tests))
+        cases.push_back(testname);
     }
   }
   fclose(f);
@@ -425,12 +446,26 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
+  std::vector<std::regex> excluded_tests;
+  if (args.find("exclude-tests") != args.end()) {
+    std::vector<std::string> results;
+    std::vector<std::string>::const_iterator it;
+
+    boost::split(results, args.find("exclude-tests")->second,
+                 [](char c){return c == ',';});
+
+    for (it = results.begin(); it != results.end(); ++it)
+      excluded_tests.push_back(std::regex(*it));
+  }
+
   Context ctx;
   ctx.deqp = args.find("deqp")->second;
-  if (args.find("caselist") == args.end())
-    ctx.test_cases = get_testcases(ctx.deqp);
-  else
-    ctx.test_cases = parse_testcase_file(args.find("caselist")->second);
+  if (args.find("caselist") == args.end()) {
+    ctx.test_cases = get_testcases(ctx.deqp, excluded_tests);
+  } else {
+    ctx.test_cases = parse_testcase_file(args.find("caselist")->second,
+                                         excluded_tests);
+  }
 
   if (args.find("timeout") != args.end())
     ctx.timeout = strtof(args.find("timeout")->second.c_str(), NULL);
