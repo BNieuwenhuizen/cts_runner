@@ -111,6 +111,7 @@ std::vector<std::string> get_testcases(std::string const &deqp,
 }
 
 struct Context {
+  unsigned device_id;
   std::string deqp;
   std::vector<std::string> test_cases;
   std::chrono::time_point<std::chrono::steady_clock> start_time;
@@ -249,6 +250,7 @@ bool process_block(Context &ctx, unsigned thread_id) {
     if (start) {
       int fd[2];
       std::string arg = "--deqp-caselist-file=" + filename;
+      std::string device_id = "--deqp-vk-device-id= " + std::to_string(ctx.device_id);
       std::ofstream out(filename);
       for (auto &&e : indices)
         out << e.first << "\n";
@@ -262,7 +264,7 @@ bool process_block(Context &ctx, unsigned thread_id) {
         dup2(fd[1], 2);
         if (chdir(dir.c_str()))
           throw - 1;
-        execl(ctx.deqp.c_str(), ctx.deqp.c_str(), arg.c_str(),
+        execl(ctx.deqp.c_str(), ctx.deqp.c_str(), arg.c_str(), device_id.c_str(),
               "--deqp-log-images=disable",
               "--deqp-log-shader-sources=disable",
               "--deqp-log-flush=disable",
@@ -473,6 +475,10 @@ int main(int argc, char *argv[]) {
   int job = 0;
   if (args.find("job") != args.end())
     job = strtol(args.find("job")->second.c_str(), NULL, 10);
+
+  ctx.device_id = 1;
+  if (args.find("device") != args.end())
+    ctx.device_id = strtol(args.find("device")->second.c_str(), NULL, 10);
 
   std::mt19937 rng;
   std::shuffle(ctx.test_cases.begin(), ctx.test_cases.end(), rng);
