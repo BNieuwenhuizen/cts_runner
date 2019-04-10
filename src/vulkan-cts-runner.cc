@@ -250,7 +250,7 @@ bool process_block(Context &ctx, unsigned thread_id) {
     if (start) {
       int fd[2];
       std::string arg = "--deqp-caselist-file=" + filename;
-      std::string device_id = "--deqp-vk-device-id= " + std::to_string(ctx.device_id);
+      std::string device_id = "--deqp-vk-device-id=" + std::to_string(ctx.device_id);
       std::ofstream out(filename);
       for (auto &&e : indices)
         out << e.first << "\n";
