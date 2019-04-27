@@ -97,7 +97,7 @@ int main(int argc, char **argv)
     result = vkCreateInstance(&instanceCreateInfo, NULL, &instance);
     if (result != VK_SUCCESS) {
         fprintf(stderr, "Failed to create instance (%d).\n", result);
-        return -1;
+        goto fail_instance;
     }
 
     /**
@@ -223,6 +223,8 @@ fail_cmdpool:
 fail_device:
     free(physical_devices);
     vkDestroyInstance(instance, NULL);
+fail_instance:
+    kill(pid, SIGKILL);
 
     return ret;
 }
