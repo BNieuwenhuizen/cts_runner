@@ -66,6 +66,18 @@ fail:
     return result;
 }
 
+static unsigned
+get_device_id()
+{
+    int device_id = 0;
+    char *str;
+
+    str = getenv("HANG_DETECTION_DEVICE_ID");
+    if (str)
+        device_id = strtol(str, NULL, 10);
+    return device_id;
+}
+
 int main(int argc, char **argv)
 {
     VkPhysicalDevice *physical_devices;
@@ -74,9 +86,12 @@ int main(int argc, char **argv)
     uint32_t queue_count;
     VkInstance instance;
     VkResult result;
+    int device_id;
     int ret = 0;
     int status;
     pid_t pid;
+
+    device_id = get_device_id();
 
     pid = fork();
     if (!pid) {
@@ -118,12 +133,19 @@ int main(int argc, char **argv)
         goto fail_device;
     }
 
+    /* Check if the device ID is valid. */
+    if (device_id > device_count - 1) {
+        fprintf(stderr, "Invalid device ID found (device ID starts from 0)\n");
+        ret = -1;
+        goto fail_device;
+    }
+
     VkPhysicalDeviceProperties device_properties;
-    vkGetPhysicalDeviceProperties(physical_devices[0], &device_properties);
+    vkGetPhysicalDeviceProperties(physical_devices[device_id], &device_properties);
     fprintf(stderr, "GPU: %s\n", device_properties.deviceName);
 
     /* Get queue properties. */
-    vkGetPhysicalDeviceQueueFamilyProperties(physical_devices[0],
+    vkGetPhysicalDeviceQueueFamilyProperties(physical_devices[device_id],
                                              &queue_count, NULL);
     assert(queue_count <= MAX_ALLOWED_QUEUES);
 
