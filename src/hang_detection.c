@@ -69,7 +69,7 @@ fail:
 static unsigned
 get_device_id()
 {
-    int device_id = 0;
+    int device_id = 1;
     char *str;
 
     str = getenv("HANG_DETECTION_DEVICE_ID");
@@ -81,6 +81,7 @@ get_device_id()
 int main(int argc, char **argv)
 {
     VkPhysicalDevice *physical_devices;
+    VkPhysicalDevice physical_device;
     uint32_t device_count;
     VkQueue queues[MAX_ALLOWED_QUEUES];
     uint32_t queue_count;
@@ -134,19 +135,20 @@ int main(int argc, char **argv)
     }
 
     /* Check if the device ID is valid. */
-    if (device_id > device_count - 1) {
-        fprintf(stderr, "Invalid device ID found (device ID starts from 0)\n");
+    if (device_id < 1 || device_id > device_count) {
+        fprintf(stderr, "Invalid device ID found (device ID starts from 1)\n");
         ret = -1;
         goto fail_device;
     }
 
+    physical_device = physical_devices[device_id - 1];
+
     VkPhysicalDeviceProperties device_properties;
-    vkGetPhysicalDeviceProperties(physical_devices[device_id], &device_properties);
+    vkGetPhysicalDeviceProperties(physical_device, &device_properties);
     fprintf(stderr, "GPU: %s\n", device_properties.deviceName);
 
     /* Get queue properties. */
-    vkGetPhysicalDeviceQueueFamilyProperties(physical_devices[device_id],
-                                             &queue_count, NULL);
+    vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_count, NULL);
     assert(queue_count <= MAX_ALLOWED_QUEUES);
 
     /* Create logical device. */
@@ -164,8 +166,7 @@ int main(int argc, char **argv)
     deviceCreateInfo.ppEnabledExtensionNames = NULL;
 
     VkDevice device;
-    result = vkCreateDevice(physical_devices[0], &deviceCreateInfo,
-                            NULL, &device);
+    result = vkCreateDevice(physical_device, &deviceCreateInfo, NULL, &device);
     if (result != VK_SUCCESS) {
         fprintf(stderr, "Failed to create device (%d).\n", result);
         ret = -1;
