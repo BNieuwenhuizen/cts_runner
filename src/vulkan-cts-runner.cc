@@ -379,9 +379,16 @@ bool process_block(Context &ctx, unsigned thread_id) {
       test_active = true;
       before_first_test = false;
     } else if (string_matches(line, "FATAL ERROR: ")) {
-      std::cerr << line;
-      std::cerr << "\n";
-      abort();
+      if (test_active) {
+        test_active = false;
+        ctx.results[test_idx] = "Fail";
+        ++idx;
+        ++ctx.fail_count;
+      } else {
+        std::cerr << line;
+        std::cerr << "\n";
+        abort();
+      }
     }
   }
   if (!indices.empty()) {
