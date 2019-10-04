@@ -79,12 +79,24 @@ std::vector<std::string> parse_testcase_file(std::string const &filename,
 }
 
 std::vector<std::string> get_testcases(std::string const &deqp,
-                                       const std::vector<std::regex> &excluded_tests) {
+                                       const std::vector<std::regex> &excluded_tests,
+                                       const std::vector<std::string> &deqp_args) {
   std::string dir = std::filesystem::path(deqp).parent_path().native();
   FILE *f;
   char buf[4096];
   std::vector<std::string> cases;
   int fd[2];
+
+  std::vector<std::string> args;
+  args.push_back(deqp.c_str());
+  args.push_back("--deqp-runmode=stdout-caselist");
+  args.insert(args.end(), deqp_args.begin(), deqp_args.end());
+
+  const char *c_args[args.size() + 1];
+  for (unsigned i = 0; i < args.size(); i++) {
+    c_args[i] = args[i].c_str();
+  }
+  c_args[args.size()] = NULL;
 
   if (pipe(fd))
     throw - 1;
@@ -95,8 +107,7 @@ std::vector<std::string> get_testcases(std::string const &deqp,
     dup2(fd[1], 2);
     if (chdir(dir.c_str()))
       throw - 1;
-    execl(deqp.c_str(), deqp.c_str(), "--deqp-runmode=stdout-caselist",
-          (char *)NULL);
+    execv(deqp.c_str(), (char *const *)c_args);
   }
   close(fd[1]);
   f = fdopen(fd[0], "r");
@@ -127,6 +138,7 @@ struct Context {
   std::atomic<std::size_t> pass_count, fail_count, skip_count, crash_count,
       timeout_count, undetermined_count;
   double timeout = 60.0;
+  std::vector<std::string> deqp_args;
 
   Context() {
     pass_count = 0;
@@ -256,12 +268,27 @@ bool process_block(Context &ctx, unsigned thread_id) {
   while (idx < count) {
     if (start) {
       int fd[2];
-      std::string arg = "--deqp-caselist-file=" + filename;
-      std::string device_id = "--deqp-vk-device-id=" + std::to_string(ctx.device_id);
       std::ofstream out(filename);
       for (auto &&e : indices)
         out << e.first << "\n";
       out.close();
+
+      std::vector<std::string> args;
+      args.push_back(ctx.deqp.c_str());
+      args.push_back("--deqp-log-images=disable");
+      args.push_back("--deqp-log-shader-sources=disable");
+      args.push_back("--deqp-log-flush=disable");
+      args.push_back("--deqp-shadercache=disable");
+      args.push_back("--deqp-log-filename=/dev/null");
+      args.push_back("--deqp-caselist-file=" + filename);
+      args.push_back("--deqp-vk-device-id=" + std::to_string(ctx.device_id));
+      args.insert(args.end(), ctx.deqp_args.begin(), ctx.deqp_args.end());
+
+      const char *c_args[args.size() + 1];
+      for (unsigned i = 0; i < args.size(); i++) {
+        c_args[i] = args[i].c_str();
+      }
+      c_args[args.size()] = NULL;
 
       if (pipe2(fd, O_CLOEXEC))
         throw - 1;
@@ -271,12 +298,8 @@ bool process_block(Context &ctx, unsigned thread_id) {
         dup2(fd[1], 2);
         if (chdir(dir.c_str()))
           throw - 1;
-        execl(ctx.deqp.c_str(), ctx.deqp.c_str(), arg.c_str(), device_id.c_str(),
-              "--deqp-log-images=disable",
-              "--deqp-log-shader-sources=disable",
-              "--deqp-log-flush=disable",
-              "--deqp-shadercache=disable",
-              "--deqp-log-filename=/dev/null", (char *)NULL);
+
+        execv(ctx.deqp.c_str(), (char *const *)c_args);
       }
       close(fd[1]);
       reader.set_fd(fd[0]);
@@ -424,6 +447,7 @@ usage(char *progname)
   std::cerr << "    [--exclude-tests <regex,regex,...>]\n";
   std::cerr << "    [--job <threadcount>]\n";
   std::cerr << "    [--device <vk device id>]\n";
+  std::cerr << "    [-- --deqp-binary-arguments]\n";
   std::cerr << "\n";
 
   std::cerr << "--timeout defaults to 60 seconds of no new dEQP output\n";
@@ -431,7 +455,8 @@ usage(char *progname)
   exit(1);
 }
 
-std::map<std::string, std::string> parse_args(int argc, char *argv[]) {
+std::map<std::string, std::string> parse_args(int argc, char *argv[],
+					      std::vector<std::string> *deqp_args) {
   std::map<std::string, std::string> args;
   for (int i = 1; i < argc; ++i) {
     if (argv[i][0] != '-' || argv[i][1] != '-') {
@@ -447,7 +472,7 @@ std::map<std::string, std::string> parse_args(int argc, char *argv[]) {
 	usage(argv[0]);
       }
       args[arg_name] = value;
-    } else {
+    } else if (strcmp(argv[i], "--") != 0) {
       std::string arg_name = argv[i] + 2;
       ++i;
       if (i == argc) {
@@ -459,6 +484,11 @@ std::map<std::string, std::string> parse_args(int argc, char *argv[]) {
 	usage(argv[0]);
       }
       args[arg_name] = argv[i];
+    } else {
+      ++i;
+      for (; i < argc; ++i) {
+	deqp_args->push_back(argv[i]);
+      }
     }
   }
   return args;
@@ -467,7 +497,8 @@ std::map<std::string, std::string> parse_args(int argc, char *argv[]) {
 int main(int argc, char *argv[]) {
   signal(SIGCHLD, SIG_IGN);
 
-  auto args = parse_args(argc, argv);
+  std::vector<std::string> deqp_args;
+  auto args = parse_args(argc, argv, &deqp_args);
   if (args.find("deqp") == args.end()) {
     std::cerr << "--deqp missing\n";
     usage(argv[0]);
@@ -490,8 +521,9 @@ int main(int argc, char *argv[]) {
 
   Context ctx;
   ctx.deqp = args.find("deqp")->second;
+  ctx.deqp_args = deqp_args;
   if (args.find("caselist") == args.end()) {
-    ctx.test_cases = get_testcases(ctx.deqp, excluded_tests);
+    ctx.test_cases = get_testcases(ctx.deqp, excluded_tests, deqp_args);
   } else {
     ctx.test_cases = parse_testcase_file(args.find("caselist")->second,
                                          excluded_tests);
