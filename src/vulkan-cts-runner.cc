@@ -401,12 +401,30 @@ void update(Context &ctx) {
   std::cout.flush();
 }
 
+void
+usage(char *progname)
+{
+  std::cerr << "Usage: " << progname << "\n";
+  std::cerr << "    --deqp <deqp-vk or deqp-gles* binary>\n";
+  std::cerr << "    --output <log filename>\n";
+  std::cerr << "    [--caselist <mustpass.txt>]\n";
+  std::cerr << "    [--timeout <seconds>]\n";
+  std::cerr << "    [--exclude-tests <regex,regex,...>]\n";
+  std::cerr << "    [--job <threadcount>]\n";
+  std::cerr << "    [--device <vk device id>]\n";
+  std::cerr << "\n";
+
+  std::cerr << "--timeout defaults to 60 seconds of no new dEQP output\n";
+  std::cerr << "--job defaults to CPU thread count\n";
+  exit(1);
+}
+
 std::map<std::string, std::string> parse_args(int argc, char *argv[]) {
   std::map<std::string, std::string> args;
   for (int i = 1; i < argc; ++i) {
     if (argv[i][0] != '-' || argv[i][1] != '-') {
       std::cerr << "arguments have to start with '--'\n";
-      std::exit(1);
+      usage(argv[0]);
     }
     auto eq = strchr(argv[i], '=');
     if (eq) {
@@ -414,7 +432,7 @@ std::map<std::string, std::string> parse_args(int argc, char *argv[]) {
       std::string value = eq + 1;
       if (args.find(arg_name) != args.end()) {
         std::cerr << "specified '" << arg_name << "' twice.\n";
-        std::exit(1);
+	usage(argv[0]);
       }
       args[arg_name] = value;
     } else {
@@ -422,11 +440,11 @@ std::map<std::string, std::string> parse_args(int argc, char *argv[]) {
       ++i;
       if (i == argc) {
         std::cerr << "missing value for argument '" << arg_name << "'\n";
-        std::exit(1);
+	usage(argv[0]);
       }
       if (args.find(arg_name) != args.end()) {
         std::cerr << "specified '" << arg_name << "' twice.\n";
-        std::exit(1);
+	usage(argv[0]);
       }
       args[arg_name] = argv[i];
     }
@@ -440,11 +458,11 @@ int main(int argc, char *argv[]) {
   auto args = parse_args(argc, argv);
   if (args.find("deqp") == args.end()) {
     std::cerr << "--deqp missing\n";
-    return 1;
+    usage(argv[0]);
   }
   if (args.find("output") == args.end()) {
     std::cerr << "--output missing\n";
-    return 1;
+    usage(argv[0]);
   }
 
   std::vector<std::regex> excluded_tests;
