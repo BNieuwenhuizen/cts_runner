@@ -43,7 +43,6 @@
 #include <regex>
 
 #include <boost/filesystem.hpp>
-#include <boost/algorithm/string/split.hpp>
 
 bool is_excluded_test(std::string const &testname,
                       const std::vector<std::regex> &excluded_tests)
@@ -451,14 +450,13 @@ int main(int argc, char *argv[]) {
 
   std::vector<std::regex> excluded_tests;
   if (args.find("exclude-tests") != args.end()) {
-    std::vector<std::string> results;
-    std::vector<std::string>::const_iterator it;
+    std::istringstream excluded(args.find("exclude-tests")->second);
 
-    boost::split(results, args.find("exclude-tests")->second,
-                 [](char c){return c == ',';});
-
-    for (it = results.begin(); it != results.end(); ++it)
-      excluded_tests.push_back(std::regex(*it));
+    while (excluded.good()) {
+      std::string test;
+      getline(excluded, test, ',');
+      excluded_tests.push_back(std::regex(test));
+    }
   }
 
   Context ctx;
