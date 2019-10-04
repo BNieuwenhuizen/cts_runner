@@ -43,6 +43,11 @@
 #include <unordered_map>
 #include <regex>
 
+bool string_matches(const char *str1, const char *str2)
+{
+  return strncmp(str1, str2, strlen(str2)) == 0;
+}
+
 bool is_excluded_test(std::string const &testname,
                       const std::vector<std::regex> &excluded_tests)
 
@@ -97,7 +102,7 @@ std::vector<std::string> get_testcases(std::string const &deqp,
   f = fdopen(fd[0], "r");
 
   while (fgets(buf, 4096, f)) {
-    if (strncmp(buf, "TEST: ", 6) == 0) {
+    if (string_matches(buf, "TEST: ")) {
       auto len = strlen(buf);
       std::string testname = std::string(buf + 6, buf + len - 1);
 
@@ -288,7 +293,7 @@ bool process_block(Context &ctx, unsigned thread_id) {
         ++idx;
         test_active = false;
       }
-    } else if (r == Line_reader::END || strncmp(line, "DONE!", 5) == 0) {
+    } else if (r == Line_reader::END || string_matches(line, "DONE!")) {
       start = true;
       if (test_active) {
         ctx.results[test_idx] = "Crash";
@@ -296,27 +301,27 @@ bool process_block(Context &ctx, unsigned thread_id) {
         ++idx;
         test_active = false;
       }
-    } else if (strncmp(line, "  NotSupported", 14) == 0) {
+    } else if (string_matches(line, "  NotSupported")) {
       assert(test_active);
       test_active = false;
       ctx.results[test_idx] = "Skip";
       ++idx;
       ++ctx.skip_count;
-    } else if (strncmp(line, "  Fail", 6) == 0) {
+    } else if (string_matches(line, "  Fail")) {
       assert(test_active);
       test_active = false;
       ctx.results[test_idx] = "Fail";
       ++idx;
       ++ctx.fail_count;
-    } else if (strncmp(line, "  Pass", 6) == 0 ||
-               strncmp(line, "  CompatibilityWarning", 22) == 0 ||
-               strncmp(line, "  QualityWarning", 16) == 0) {
+    } else if (string_matches(line, "  Pass") ||
+               string_matches(line, "  CompatibilityWarning") ||
+               string_matches(line, "  QualityWarning")) {
       assert(test_active);
       test_active = false;
       ctx.results[test_idx] = "Pass";
       ++idx;
       ++ctx.pass_count;
-    } else if (strncmp(line, "Test case '", 11) == 0) {
+    } else if (string_matches(line, "Test case '")) {
       if (indices.size() + idx != count) {
         assert(test_active);
         test_active = false;
