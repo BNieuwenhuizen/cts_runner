@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cassert>
 #include <chrono>
 #include <fstream>
 #include <iostream>
