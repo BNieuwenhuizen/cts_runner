@@ -108,6 +108,9 @@ std::vector<std::string> get_testcases(std::string const &deqp,
 
       if (!is_excluded_test(testname, excluded_tests))
         cases.push_back(testname);
+    } else if (string_matches(buf, "FATAL ERROR: ")) {
+      std::cerr << "Error getting caselist:\n";
+      std::cerr << buf;
     }
   }
   fclose(f);
@@ -338,6 +341,10 @@ bool process_block(Context &ctx, unsigned thread_id) {
       test_idx = it->second;
       indices.erase(it);
       test_active = true;
+    } else if (string_matches(line, "FATAL ERROR: ")) {
+      std::cerr << line;
+      std::cerr << "\n";
+      abort();
     }
   }
   if (!indices.empty()) {
