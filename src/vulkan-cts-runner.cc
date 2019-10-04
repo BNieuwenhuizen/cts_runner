@@ -24,6 +24,7 @@
 #include <atomic>
 #include <cassert>
 #include <chrono>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -41,8 +42,6 @@
 #include <unistd.h>
 #include <unordered_map>
 #include <regex>
-
-#include <boost/filesystem.hpp>
 
 bool is_excluded_test(std::string const &testname,
                       const std::vector<std::regex> &excluded_tests)
@@ -76,7 +75,7 @@ std::vector<std::string> parse_testcase_file(std::string const &filename,
 
 std::vector<std::string> get_testcases(std::string const &deqp,
                                        const std::vector<std::regex> &excluded_tests) {
-  std::string dir = boost::filesystem::path{deqp}.parent_path().native();
+  std::string dir = std::filesystem::path(deqp).parent_path().native();
   FILE *f;
   char buf[4096];
   std::vector<std::string> cases;
@@ -237,7 +236,7 @@ bool process_block(Context &ctx, unsigned thread_id) {
 
   std::string filename = "/tmp/cts_runner." + std::to_string(getpid()) + "." +
                          std::to_string(thread_id);
-  std::string dir = boost::filesystem::path{ctx.deqp}.parent_path().native();
+  std::string dir = std::filesystem::path(ctx.deqp).parent_path().native();
   std::size_t idx = 0, test_idx = 0;
   Line_reader reader;
   bool start = true;
