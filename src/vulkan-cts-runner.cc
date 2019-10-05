@@ -407,9 +407,6 @@ bool process_block(Context &ctx, unsigned thread_id) {
                string_matches(line, "  QualityWarning")) {
       state.record_result(PASS);
     } else if (string_matches(line, "Test case '")) {
-      if (state.indices.size() + state.idx != count) {
-        state.record_result(UNDETERMINED);
-      }
       auto len = strlen(line) - 3;
       auto name = std::string(line + 11, line + len);
       auto it = state.indices.find(name);
