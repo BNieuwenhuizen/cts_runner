@@ -280,14 +280,12 @@ public:
   bool start; /* Set if we are due to spawn a new CTS instance. */
   bool test_active; /* Set if we're between test start and test status */
 
-  std::size_t idx; /* Next test's index within our test list. */
   std::size_t test_idx; /* Index in the main test list of the active test. */
 
   void record_result(enum status status) {
     assert(test_active);
     ctx.results[test_idx] = status;
     ctx.status_counts[status]++;
-    idx++;
     test_active = false;
   }
 
@@ -303,7 +301,6 @@ public:
 
     start = true;
     test_active = false;
-    idx = 0;
     test_idx = 0;
   }
 };
@@ -333,7 +330,7 @@ bool process_block(Context &ctx, unsigned thread_id) {
    * we have processed them all.  This may take more than one run in
    * the case of crashes.
    */
-  while (state.idx < count) {
+  while (state.test_active || !state.indices.empty()) {
     if (state.start) {
       int fd[2];
       std::ofstream out(filename);
@@ -426,9 +423,6 @@ bool process_block(Context &ctx, unsigned thread_id) {
         abort();
       }
     }
-  }
-  if (!state.indices.empty()) {
-    abort();
   }
   unlink(filename.c_str());
   ctx.finished_cases += count;
