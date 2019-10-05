@@ -275,7 +275,7 @@ Line_reader::read_status Line_reader::read(char **text, double timeout) {
 class ProcessBlockState {
 public:
   Context &ctx;
-  std::unordered_map<std::string, unsigned> indices;
+  std::map<std::string, unsigned> indices;
 
   bool start; /* Set if we are due to spawn a new CTS instance. */
   bool test_active; /* Set if we're between test start and test status */
