@@ -128,25 +128,54 @@ std::vector<std::string> get_testcases(std::string const &deqp,
   return cases;
 }
 
+enum status {
+  PASS,
+  FAIL,
+  SKIP,
+  CRASH,
+  UNDETERMINED,
+  TIMEOUT,
+  MISSING,
+};
+#define STATUS_COUNT ((int)MISSING + 1)
+
+std::string get_status_name(enum status status)
+{
+  switch (status) {
+  case PASS:
+    return "Pass";
+  case FAIL:
+    return "Fail";
+  case SKIP:
+    return "Skip";
+  case CRASH:
+    return "Crash";
+  case UNDETERMINED:
+    return "Undetermined";
+  case TIMEOUT:
+    return "Timeout";
+  case MISSING:
+    return "Missing";
+  default:
+    abort();
+  }
+}
+
 struct Context {
   unsigned device_id;
   std::string deqp;
   std::vector<std::string> test_cases;
   std::chrono::time_point<std::chrono::steady_clock> start_time;
-  std::vector<char const *> results;
+  std::vector<enum status> results;
   std::atomic<std::size_t> taken_cases, finished_cases;
-  std::atomic<std::size_t> pass_count, fail_count, skip_count, crash_count,
-      timeout_count, undetermined_count, missing_count;
   double timeout = 60.0;
   std::vector<std::string> deqp_args;
 
+  std::atomic<std::size_t> status_counts[STATUS_COUNT];
+
   Context() {
-    pass_count = 0;
-    fail_count = 0;
-    skip_count = 0;
-    crash_count = 0;
-    undetermined_count = 0;
-    missing_count = 0;
+    for (int i = 0; i < STATUS_COUNT; i++)
+      status_counts[i] = 0;
   }
 };
 
@@ -243,6 +272,42 @@ Line_reader::read_status Line_reader::read(char **text, double timeout) {
   }
 }
 
+class ProcessBlockState {
+public:
+  Context &ctx;
+  std::unordered_map<std::string, unsigned> indices;
+
+  bool start; /* Set if we are due to spawn a new CTS instance. */
+  bool test_active; /* Set if we're between test start and test status */
+
+  std::size_t idx; /* Next test's index within our test list. */
+  std::size_t test_idx; /* Index in the main test list of the active test. */
+
+  void record_result(enum status status) {
+    assert(test_active);
+    ctx.results[test_idx] = status;
+    ctx.status_counts[status]++;
+    idx++;
+    test_active = false;
+  }
+
+  ProcessBlockState(Context &ctx, size_t base_idx, size_t count)
+    : ctx(ctx)
+  {
+    /* Make a list of all the tests to run and their indices in the main
+     * test list.  As we see the CTS start running a test, we'll erase
+     * that entry.
+     */
+    for (std::size_t i = 0; i < count; ++i)
+      indices.insert({ctx.test_cases[base_idx + i], base_idx + i});
+
+    start = true;
+    test_active = false;
+    idx = 0;
+    test_idx = 0;
+  }
+};
+
 bool process_block(Context &ctx, unsigned thread_id) {
   /* Use cmpxchg to take a block of tests from the whole list */
   std::size_t base_idx, count;
@@ -259,29 +324,20 @@ bool process_block(Context &ctx, unsigned thread_id) {
   std::string filename = "/tmp/cts_runner." + std::to_string(getpid()) + "." +
                          std::to_string(thread_id);
   std::string dir = std::filesystem::path(ctx.deqp).parent_path().native();
-  std::size_t idx = 0, test_idx = 0;
   Line_reader reader;
-  bool start = true;
-  bool test_active = false;
   bool before_first_test = true;
-  std::unordered_map<std::string, unsigned> indices;
 
-  /* Make a list of all the tests to run and their indices in the main
-   * test list.  As we see the CTS start running a test, we'll erase
-   * those entries.
-   */
-  for (std::size_t i = 0; i < count; ++i)
-    indices.insert({ctx.test_cases[base_idx + i], base_idx + i});
+  ProcessBlockState state(ctx, base_idx, count);
 
   /* Loop running the test suite on the remaining tests to run until
    * we have processed them all.  This may take more than one run in
    * the case of crashes.
    */
-  while (idx < count) {
-    if (start) {
+  while (state.idx < count) {
+    if (state.start) {
       int fd[2];
       std::ofstream out(filename);
-      for (auto &&e : indices)
+      for (auto &&e : state.indices)
         out << e.first << "\n";
       out.close();
 
@@ -315,8 +371,8 @@ bool process_block(Context &ctx, unsigned thread_id) {
       }
       close(fd[1]);
       reader.set_fd(fd[0]);
-      start = false;
-      test_active = false;
+      state.start = false;
+      state.test_active = false;
       before_first_test = true;
     }
     char *line = NULL;
@@ -325,75 +381,48 @@ bool process_block(Context &ctx, unsigned thread_id) {
     if (r == Line_reader::FAIL) {
       abort();
     } else if (r == Line_reader::TIMEOUT) {
-      start = true;
-      if (test_active) {
-        ctx.results[test_idx] = "Timeout";
-        ++ctx.timeout_count;
-        ++idx;
-        test_active = false;
-      }
+      state.start = true;
+      if (state.test_active)
+        state.record_result(TIMEOUT);
     } else if (r == Line_reader::END || string_matches(line, "DONE!")) {
-      start = true;
-      if (test_active) {
-        ctx.results[test_idx] = "Crash";
-        ++ctx.crash_count;
-        ++idx;
-        test_active = false;
+      state.start = true;
+      if (state.test_active) {
+        state.record_result(CRASH);
       } else if(before_first_test) {
-        while(!indices.empty()) {
-          auto it = indices.begin();
-          test_idx = it->second;
-          indices.erase(it);
+        while(!state.indices.empty()) {
+          auto it = state.indices.begin();
+          state.test_idx = it->second;
+          state.test_active = true;
+          state.indices.erase(it);
 
-          ctx.results[test_idx] = "Missing";
-          ++ctx.missing_count;
-          ++idx;
+          state.record_result(MISSING);
         }
       }
     } else if (string_matches(line, "  NotSupported")) {
-      assert(test_active);
-      test_active = false;
-      ctx.results[test_idx] = "Skip";
-      ++idx;
-      ++ctx.skip_count;
+      state.record_result(SKIP);
     } else if (string_matches(line, "  Fail")) {
-      assert(test_active);
-      test_active = false;
-      ctx.results[test_idx] = "Fail";
-      ++idx;
-      ++ctx.fail_count;
+      state.record_result(FAIL);
     } else if (string_matches(line, "  Pass") ||
                string_matches(line, "  CompatibilityWarning") ||
                string_matches(line, "  QualityWarning")) {
-      assert(test_active);
-      test_active = false;
-      ctx.results[test_idx] = "Pass";
-      ++idx;
-      ++ctx.pass_count;
+      state.record_result(PASS);
     } else if (string_matches(line, "Test case '")) {
-      if (indices.size() + idx != count) {
-        assert(test_active);
-        test_active = false;
-        ctx.results[test_idx] = "Undetermined";
-        ++idx;
-        ++ctx.undetermined_count;
+      if (state.indices.size() + state.idx != count) {
+        state.record_result(UNDETERMINED);
       }
       auto len = strlen(line) - 3;
       auto name = std::string(line + 11, line + len);
-      auto it = indices.find(name);
-      if (it == indices.end()) {
+      auto it = state.indices.find(name);
+      if (it == state.indices.end()) {
         abort();
       }
-      test_idx = it->second;
-      indices.erase(it);
-      test_active = true;
+      state.test_idx = it->second;
+      state.indices.erase(it);
+      state.test_active = true;
       before_first_test = false;
     } else if (string_matches(line, "FATAL ERROR: ")) {
-      if (test_active) {
-        test_active = false;
-        ctx.results[test_idx] = "Fail";
-        ++idx;
-        ++ctx.fail_count;
+      if (state.test_active) {
+        state.record_result(FAIL);
       } else {
         std::cerr << line;
         std::cerr << "\n";
@@ -401,7 +430,7 @@ bool process_block(Context &ctx, unsigned thread_id) {
       }
     }
   }
-  if (!indices.empty()) {
+  if (!state.indices.empty()) {
     abort();
   }
   unlink(filename.c_str());
@@ -436,15 +465,15 @@ std::string format_duration(std::int64_t seconds) {
 }
 
 void update(Context &ctx) {
-  std::size_t pass_count = ctx.pass_count;
-  std::size_t fail_count = ctx.fail_count;
-  std::size_t skip_count = ctx.skip_count;
-  std::size_t crash_count = ctx.crash_count;
-  std::size_t undetermined_count = ctx.undetermined_count;
-  std::size_t timeout_count = ctx.timeout_count;
-  std::size_t missing_count = ctx.missing_count;
-  std::size_t total = pass_count + fail_count + skip_count + crash_count +
-                      undetermined_count + timeout_count + missing_count;
+  std::size_t status_counts[STATUS_COUNT];
+  /* Snapshot the status counts from the context, so our numbers in
+   * the report add up even if the atomics are being updated.
+   */
+  std::size_t total = 0;
+  for (int i = 0; i < STATUS_COUNT; i++) {
+    status_counts[i] = ctx.status_counts[i];
+    total += status_counts[i];
+  }
 
   std::chrono::time_point<std::chrono::steady_clock> current_time =
       std::chrono::steady_clock::now();
@@ -452,13 +481,12 @@ void update(Context &ctx) {
       current_time - ctx.start_time);
 
   std::cout << "[" << total << "/" << ctx.test_cases.size() << "]";
-  std::cout << " Pass: " << pass_count;
-  std::cout << " Fail: " << fail_count;
-  std::cout << " Skip: " << skip_count;
-  std::cout << " Crash: " << crash_count;
-  std::cout << " Undetermined: " << undetermined_count;
-  std::cout << " Timeout: " << timeout_count;
-  std::cout << " Missing: " << missing_count;
+  for (int i = 0; i < STATUS_COUNT; i++) {
+    std::cout << " "
+              << get_status_name((enum status)i)
+              << ": "
+              << status_counts[i];
+  }
   std::cout << " Duration: " << format_duration(duration.count());
   if (total) {
     std::cout << " Remaining: "
@@ -576,14 +604,11 @@ int main(int argc, char *argv[]) {
   std::mt19937 rng;
   std::shuffle(ctx.test_cases.begin(), ctx.test_cases.end(), rng);
   ctx.results.resize(ctx.test_cases.size());
+  for (unsigned i = 0; i < ctx.test_cases.size(); i++)
+    ctx.results[i] = UNDETERMINED;
   auto thread_count = job > 0 ? job : std::thread::hardware_concurrency();
   ctx.taken_cases = 0;
   ctx.finished_cases = 0;
-  ctx.pass_count = 0;
-  ctx.fail_count = 0;
-  ctx.skip_count = 0;
-  ctx.crash_count = 0;
-  ctx.timeout_count = 0;
   ctx.start_time = std::chrono::steady_clock::now();
   std::vector<std::thread> threads;
   for (unsigned i = 0; i < thread_count; ++i) {
@@ -602,12 +627,12 @@ int main(int argc, char *argv[]) {
     t.join();
 
   std::ofstream out(args.find("output")->second);
-  std::vector<std::pair<std::string, std::string>> sorted_results;
+  std::vector<std::pair<std::string, enum status>> sorted_results;
   for (std::size_t i = 0; i < ctx.test_cases.size(); ++i)
     sorted_results.push_back({ctx.test_cases[i], ctx.results[i]});
   std::sort(sorted_results.begin(), sorted_results.end());
   for (auto &&entry : sorted_results)
-    out << entry.first << "," << entry.second << "\n";
+    out << entry.first << "," << get_status_name(entry.second) << "\n";
   update(ctx);
   std::cout << "\n";
   return 0;
