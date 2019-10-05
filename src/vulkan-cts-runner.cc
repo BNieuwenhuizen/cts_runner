@@ -244,6 +244,7 @@ Line_reader::read_status Line_reader::read(char **text, double timeout) {
 }
 
 bool process_block(Context &ctx, unsigned thread_id) {
+  /* Use cmpxchg to take a block of tests from the whole list */
   std::size_t base_idx, count;
   do {
     base_idx = ctx.taken_cases.load();
@@ -264,9 +265,18 @@ bool process_block(Context &ctx, unsigned thread_id) {
   bool test_active = false;
   bool before_first_test = true;
   std::unordered_map<std::string, unsigned> indices;
+
+  /* Make a list of all the tests to run and their indices in the main
+   * test list.  As we see the CTS start running a test, we'll erase
+   * those entries.
+   */
   for (std::size_t i = 0; i < count; ++i)
     indices.insert({ctx.test_cases[base_idx + i], base_idx + i});
 
+  /* Loop running the test suite on the remaining tests to run until
+   * we have processed them all.  This may take more than one run in
+   * the case of crashes.
+   */
   while (idx < count) {
     if (start) {
       int fd[2];
