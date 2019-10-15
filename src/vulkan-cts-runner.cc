@@ -136,7 +136,7 @@ struct Context {
   std::vector<char const *> results;
   std::atomic<std::size_t> taken_cases, finished_cases;
   std::atomic<std::size_t> pass_count, fail_count, skip_count, crash_count,
-      timeout_count, undetermined_count;
+      timeout_count, undetermined_count, missing_count;
   double timeout = 60.0;
   std::vector<std::string> deqp_args;
 
@@ -146,6 +146,7 @@ struct Context {
     skip_count = 0;
     crash_count = 0;
     undetermined_count = 0;
+    missing_count = 0;
   }
 };
 
@@ -261,6 +262,7 @@ bool process_block(Context &ctx, unsigned thread_id) {
   Line_reader reader;
   bool start = true;
   bool test_active = false;
+  bool before_first_test = true;
   std::unordered_map<std::string, unsigned> indices;
   for (std::size_t i = 0; i < count; ++i)
     indices.insert({ctx.test_cases[base_idx + i], base_idx + i});
@@ -305,6 +307,7 @@ bool process_block(Context &ctx, unsigned thread_id) {
       reader.set_fd(fd[0]);
       start = false;
       test_active = false;
+      before_first_test = true;
     }
     char *line = NULL;
     auto r = reader.read(&line, ctx.timeout);
@@ -326,6 +329,16 @@ bool process_block(Context &ctx, unsigned thread_id) {
         ++ctx.crash_count;
         ++idx;
         test_active = false;
+      } else if(before_first_test) {
+        while(!indices.empty()) {
+          auto it = indices.begin();
+          test_idx = it->second;
+          indices.erase(it);
+
+          ctx.results[test_idx] = "Missing";
+          ++ctx.missing_count;
+          ++idx;
+        }
       }
     } else if (string_matches(line, "  NotSupported")) {
       assert(test_active);
@@ -364,6 +377,7 @@ bool process_block(Context &ctx, unsigned thread_id) {
       test_idx = it->second;
       indices.erase(it);
       test_active = true;
+      before_first_test = false;
     } else if (string_matches(line, "FATAL ERROR: ")) {
       std::cerr << line;
       std::cerr << "\n";
@@ -411,8 +425,9 @@ void update(Context &ctx) {
   std::size_t crash_count = ctx.crash_count;
   std::size_t undetermined_count = ctx.undetermined_count;
   std::size_t timeout_count = ctx.timeout_count;
+  std::size_t missing_count = ctx.missing_count;
   std::size_t total = pass_count + fail_count + skip_count + crash_count +
-                      undetermined_count + timeout_count;
+                      undetermined_count + timeout_count + missing_count;
 
   std::chrono::time_point<std::chrono::steady_clock> current_time =
       std::chrono::steady_clock::now();
@@ -426,6 +441,7 @@ void update(Context &ctx) {
   std::cout << " Crash: " << crash_count;
   std::cout << " Undetermined: " << undetermined_count;
   std::cout << " Timeout: " << timeout_count;
+  std::cout << " Missing: " << missing_count;
   std::cout << " Duration: " << format_duration(duration.count());
   if (total) {
     std::cout << " Remaining: "
