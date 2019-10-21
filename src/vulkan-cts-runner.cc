@@ -592,6 +592,10 @@ int main(int argc, char *argv[]) {
   if (args.find("device") != args.end())
     ctx.device_id = strtol(args.find("device")->second.c_str(), NULL, 10);
 
+  /* Shuffle the tests so that the groups that our threads grab are
+   * more or less evenly distributed in test namespace (since test
+   * runtime is closely related to test name).
+   */
   std::mt19937 rng;
   std::shuffle(ctx.test_cases.begin(), ctx.test_cases.end(), rng);
   ctx.results.resize(ctx.test_cases.size());
