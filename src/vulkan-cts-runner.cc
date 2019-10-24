@@ -41,6 +41,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <unordered_map>
+#include <unordered_set>
 #include <regex>
 
 bool string_matches(const char *str1, const char *str2)
@@ -132,6 +133,8 @@ enum status {
   PASS,
   FAIL,
   SKIP,
+  XFAIL,
+  UNEXPECTEDPASS,
   CRASH,
   UNDETERMINED,
   TIMEOUT,
@@ -148,6 +151,10 @@ std::string get_status_name(enum status status)
     return "Fail";
   case SKIP:
     return "Skip";
+  case XFAIL:
+    return "ExpectedFail";
+  case UNEXPECTEDPASS:
+    return "UnexpectedPass";
   case CRASH:
     return "Crash";
   case UNDETERMINED:
@@ -172,6 +179,14 @@ struct Context {
   std::vector<std::string> deqp_args;
 
   std::atomic<std::size_t> status_counts[STATUS_COUNT];
+
+  /* Set of tests supplied by the user as expected fails.  Failures
+   * and crashes of those tests will be logged as fails (and allow the
+   * test suite as a whole to return success), while passes of those
+   * tests will be logged as unexpected passes (and cause the test
+   * suite as a whole to return failure, go update your xfail list).
+   */
+  std::unordered_set<std::string> xfails;
 
   Context() {
     for (int i = 0; i < STATUS_COUNT; i++)
@@ -283,6 +298,21 @@ public:
   std::size_t test_idx; /* Index in the main test list of the active test. */
 
   void record_result(enum status status) {
+    std::string casename = ctx.test_cases[test_idx];
+    if (ctx.xfails.find(casename) != ctx.xfails.end()) {
+      switch (status) {
+      case FAIL:
+      case CRASH:
+        status = XFAIL;
+        break;
+      case PASS:
+        status = UNEXPECTEDPASS;
+        break;
+      default:
+        break;
+      }
+    }
+
     assert(test_active);
     ctx.results[test_idx] = status;
     ctx.status_counts[status]++;
@@ -495,6 +525,7 @@ usage(char *progname)
   std::cerr << "    --deqp <deqp-vk or deqp-gles* binary>\n";
   std::cerr << "    --output <log filename>\n";
   std::cerr << "    [--caselist <mustpass.txt>]\n";
+  std::cerr << "    [--xfail-list <caselist.txt>]\n";
   std::cerr << "    [--timeout <seconds>]\n";
   std::cerr << "    [--exclude-tests <regex,regex,...>]\n";
   std::cerr << "    [--job <threadcount>]\n";
@@ -581,6 +612,20 @@ int main(int argc, char *argv[]) {
                                          excluded_tests);
   }
 
+  if (args.find("xfail-list") != args.end()) {
+    std::string filename = args.find("xfail-list")->second;
+    std::ifstream in(filename);
+    if (!in.is_open()) {
+      std::cerr << "could not find xfail file \"" << filename << "\""
+                << std::endl;
+      std::exit(1);
+    }
+
+    std::string line;
+    while (std::getline(in, line))
+      ctx.xfails.insert(line);
+  }
+
   if (args.find("timeout") != args.end())
     ctx.timeout = strtof(args.find("timeout")->second.c_str(), NULL);
 
@@ -635,6 +680,7 @@ int main(int argc, char *argv[]) {
     switch ((enum status)i) {
     case PASS:
     case SKIP:
+    case XFAIL:
       break;
     default:
       if (ctx.status_counts[i] != 0)
