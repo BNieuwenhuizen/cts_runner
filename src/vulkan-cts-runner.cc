@@ -630,5 +630,17 @@ int main(int argc, char *argv[]) {
     out << entry.first << "," << get_status_name(entry.second) << "\n";
   update(ctx);
   std::cout << "\n";
+
+  for (int i = 0; i < STATUS_COUNT; i++) {
+    switch ((enum status)i) {
+    case PASS:
+    case SKIP:
+      break;
+    default:
+      if (ctx.status_counts[i] != 0)
+        return 1;
+    }
+  }
+
   return 0;
 }

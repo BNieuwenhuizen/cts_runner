@@ -12,6 +12,12 @@ tests = [
 wrap = find_program('cts_runner-test-wrapper.sh')
 
 foreach t : tests
+  if (t == 'pass')
+    expected_exit_code = '0'
+  else
+    expected_exit_code = '1'
+  endif
+
   test('deqp-' + t,
     wrap,
     args: [
@@ -19,6 +25,7 @@ foreach t : tests
       t,
       cts_runner.full_path(),
       join_paths(meson.current_source_dir(), 'deqp-' + t + '-expected.txt'),
+      expected_exit_code,
 
       # Args to cts_runner
       '--deqp',
@@ -35,6 +42,7 @@ test('deqp-big-caselist',
     'pass',
     cts_runner.full_path(),
     join_paths(meson.current_source_dir(), 'deqp-big-expected.txt'),
+    '0',
 
     '--deqp',
     deqp_mock.full_path(),
