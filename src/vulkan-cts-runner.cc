@@ -526,6 +526,7 @@ usage(char *progname)
   std::cerr << "    --output <log filename>\n";
   std::cerr << "    [--caselist <mustpass.txt>]\n";
   std::cerr << "    [--xfail-list <caselist.txt>]\n";
+  std::cerr << "    [--exclude-list <caselist.txt>]\n";
   std::cerr << "    [--timeout <seconds>]\n";
   std::cerr << "    [--exclude-tests <regex,regex,...>]\n";
   std::cerr << "    [--job <threadcount>]\n";
@@ -599,6 +600,22 @@ int main(int argc, char *argv[]) {
       std::string test;
       getline(excluded, test, ',');
       excluded_tests.push_back(std::regex(test));
+    }
+  }
+
+  if (args.find("exclude-list") != args.end()) {
+    std::string filename = args.find("exclude-list")->second;
+    std::ifstream in(filename);
+    if (!in.is_open()) {
+      std::cerr << "could not find exclude file \"" << filename << "\""
+                << std::endl;
+      std::exit(1);
+    }
+
+    std::string line;
+    while (std::getline(in, line)) {
+      if (line.size() > 0 && line[0] != '#')
+        excluded_tests.push_back(std::regex(line));
     }
   }
 
