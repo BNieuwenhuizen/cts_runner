@@ -60,6 +60,19 @@ enum status mock_crash(std::string testcase)
   return STATUS_PASS;
 }
 
+enum status mock_failcrash(std::string testcase)
+{
+  if (testcase == "dEQP-GLES2.functional.test.1") {
+    std::cout.flush();
+    abort();
+  }
+
+  if (testcase == "dEQP-GLES2.functional.test.2")
+    return STATUS_FAIL;
+
+  return STATUS_PASS;
+}
+
 enum status mock_missingtest(std::string testcase)
 {
   return STATUS_PASS;
@@ -71,6 +84,8 @@ test_fn parse_mock_mode(std::string mode)
 {
   if (mode == "pass")
     return mock_pass;
+  else if (mode == "failcrash")
+    return mock_failcrash;
   else if (mode == "fail")
     return mock_fail;
   else if (mode == "crash")

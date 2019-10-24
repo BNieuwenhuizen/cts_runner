@@ -36,6 +36,23 @@ foreach t : tests
   )
 endforeach
 
+test('deqp-xfail',
+  wrap,
+  args: [
+    'failcrash',
+    cts_runner.full_path(),
+    join_paths(meson.current_source_dir(), 'deqp-xfail-expected.txt'),
+    '0',
+
+    '--deqp',
+    deqp_mock.full_path(),
+    '--caselist',
+    join_paths(meson.current_source_dir(), 'deqp-caselist.txt'),
+    '--xfail-list',
+    join_paths(meson.current_source_dir(), 'deqp-xfail-list.txt'),
+  ],
+)
+
 test('deqp-big-caselist',
   wrap,
   args: [

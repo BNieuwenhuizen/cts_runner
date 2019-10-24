@@ -1,0 +1,2 @@
+dEQP-GLES2.functional.test.1
+dEQP-GLES2.functional.test.2
