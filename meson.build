@@ -8,7 +8,8 @@ fs_dep = cpp.find_library('stdc++fs')
 
 cts_runner = executable('vulkan-cts-runner',
            'src/vulkan-cts-runner.cc',
-           dependencies : [thread_dep, fs_dep])
+           dependencies : [thread_dep, fs_dep],
+           install : true)
 
 executable('hang-detection',
            'src/hang_detection.c',
