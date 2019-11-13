@@ -335,7 +335,7 @@ public:
   }
 };
 
-bool process_block(Context &ctx, unsigned thread_id) {
+bool process_block(Context &ctx, unsigned thread_id, unsigned iteration) {
   /* Use cmpxchg to take a block of tests from the whole list */
   std::size_t base_idx, count;
   do {
@@ -348,11 +348,11 @@ bool process_block(Context &ctx, unsigned thread_id) {
   } while (
       !ctx.taken_cases.compare_exchange_strong(base_idx, base_idx + count));
 
-  std::string filename = "/tmp/cts_runner." + std::to_string(getpid()) + "." +
-                         std::to_string(thread_id);
-  std::string dir = std::filesystem::path(ctx.deqp).parent_path().native();
   Line_reader reader;
   bool before_first_test = true;
+  bool has_fails = false;
+  std::string filename = "";
+  int idx = 0;
 
   ProcessBlockState state(ctx, base_idx, count);
 
@@ -362,6 +362,15 @@ bool process_block(Context &ctx, unsigned thread_id) {
    */
   while (state.test_active || !state.indices.empty()) {
     if (state.start) {
+      if ((filename != "") && !has_fails) {
+        unlink(filename.c_str());
+      }
+      filename = "/tmp/cts_runner." + std::to_string(getpid()) + "." +
+          std::to_string(thread_id) + "." +
+          std::to_string(iteration) + "." +
+          std::to_string(idx++) + ".txt";
+      std::string dir = std::filesystem::path(ctx.deqp).parent_path().native();
+
       int fd[2];
       std::ofstream out(filename);
       for (auto &&e : state.indices)
@@ -401,6 +410,7 @@ bool process_block(Context &ctx, unsigned thread_id) {
       state.start = false;
       state.test_active = false;
       before_first_test = true;
+      has_fails = false;
     }
     char *line = NULL;
     auto r = reader.read(&line, ctx.timeout);
@@ -409,12 +419,15 @@ bool process_block(Context &ctx, unsigned thread_id) {
       abort();
     } else if (r == Line_reader::TIMEOUT) {
       state.start = true;
-      if (state.test_active)
+      if (state.test_active) {
         state.record_result(TIMEOUT);
+        has_fails = true;
+      }
     } else if (r == Line_reader::END || string_matches(line, "DONE!")) {
       state.start = true;
       if (state.test_active) {
         state.record_result(CRASH);
+        has_fails = true;
       } else if(before_first_test) {
         while(!state.indices.empty()) {
           auto it = state.indices.begin();
@@ -429,6 +442,7 @@ bool process_block(Context &ctx, unsigned thread_id) {
       state.record_result(SKIP);
     } else if (string_matches(line, "  Fail")) {
       state.record_result(FAIL);
+      has_fails = true;
     } else if (string_matches(line, "  Pass") ||
                string_matches(line, "  CompatibilityWarning") ||
                string_matches(line, "  QualityWarning")) {
@@ -447,6 +461,7 @@ bool process_block(Context &ctx, unsigned thread_id) {
     } else if (string_matches(line, "FATAL ERROR: ")) {
       if (state.test_active) {
         state.record_result(FAIL);
+        has_fails = true;
       } else {
         std::cerr << line;
         std::cerr << "\n";
@@ -454,13 +469,16 @@ bool process_block(Context &ctx, unsigned thread_id) {
       }
     }
   }
-  unlink(filename.c_str());
+  if ((filename != "") && !has_fails) {
+    unlink(filename.c_str());
+  }
   ctx.finished_cases += count;
   return true;
 }
 
 void thread_runner(Context &ctx, unsigned thread_id) {
-  while (process_block(ctx, thread_id))
+  unsigned iteration = 0;
+  while (process_block(ctx, thread_id, iteration++))
     ;
 }
 
