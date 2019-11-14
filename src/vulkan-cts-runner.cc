@@ -343,7 +343,7 @@ bool process_block(Context &ctx, unsigned thread_id, unsigned iteration) {
     if (base_idx >= ctx.test_cases.size())
       return false;
     count = std::min<std::size_t>(
-        std::max<std::size_t>((ctx.test_cases.size() - base_idx) / 32, 1), 128);
+        std::max<std::size_t>((ctx.test_cases.size() - base_idx) / 32, 1), 48);
 
   } while (
       !ctx.taken_cases.compare_exchange_strong(base_idx, base_idx + count));
@@ -352,6 +352,7 @@ bool process_block(Context &ctx, unsigned thread_id, unsigned iteration) {
   bool before_first_test = true;
   bool has_fails = false;
   std::string filename = "";
+  std::string qpafilename = "";
   int idx = 0;
 
   ProcessBlockState state(ctx, base_idx, count);
@@ -364,11 +365,16 @@ bool process_block(Context &ctx, unsigned thread_id, unsigned iteration) {
     if (state.start) {
       if ((filename != "") && !has_fails) {
         unlink(filename.c_str());
+        unlink(qpafilename.c_str());
       }
       filename = "/tmp/cts_runner." + std::to_string(getpid()) + "." +
           std::to_string(thread_id) + "." +
           std::to_string(iteration) + "." +
           std::to_string(idx++) + ".txt";
+      qpafilename = "/tmp/cts_runner." + std::to_string(getpid()) + "." +
+          std::to_string(thread_id) + "." +
+          std::to_string(iteration) + "." +
+          std::to_string(idx++) + ".qpa";
       std::string dir = std::filesystem::path(ctx.deqp).parent_path().native();
 
       int fd[2];
@@ -383,7 +389,7 @@ bool process_block(Context &ctx, unsigned thread_id, unsigned iteration) {
       args.push_back("--deqp-log-shader-sources=disable");
       args.push_back("--deqp-log-flush=disable");
       args.push_back("--deqp-shadercache=disable");
-      args.push_back("--deqp-log-filename=/dev/null");
+      args.push_back("--deqp-log-filename=" + qpafilename);
       args.push_back("--deqp-caselist-file=" + filename);
       args.push_back("--deqp-vk-device-id=" + std::to_string(ctx.device_id));
       args.insert(args.end(), ctx.deqp_args.begin(), ctx.deqp_args.end());
@@ -471,6 +477,7 @@ bool process_block(Context &ctx, unsigned thread_id, unsigned iteration) {
   }
   if ((filename != "") && !has_fails) {
     unlink(filename.c_str());
+    unlink(qpafilename.c_str());
   }
   ctx.finished_cases += count;
   return true;
