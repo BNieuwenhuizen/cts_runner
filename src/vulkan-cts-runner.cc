@@ -385,8 +385,8 @@ bool process_block(Context &ctx, unsigned thread_id, unsigned iteration) {
 
       std::vector<std::string> args;
       args.push_back(ctx.deqp.c_str());
-      args.push_back("--deqp-log-images=disable");
-      args.push_back("--deqp-log-shader-sources=disable");
+//      args.push_back("--deqp-log-images=disable");
+//      args.push_back("--deqp-log-shader-sources=disable");
       args.push_back("--deqp-log-flush=disable");
       args.push_back("--deqp-shadercache=disable");
       args.push_back("--deqp-log-filename=" + qpafilename);
