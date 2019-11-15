@@ -139,8 +139,9 @@ enum status {
   CRASH,
   TIMEOUT,
   MISSING,
+  FLAKE,
 };
-#define STATUS_COUNT ((int)MISSING + 1)
+#define STATUS_COUNT ((int)FLAKE + 1)
 
 std::string get_status_name(enum status status)
 {
@@ -161,6 +162,8 @@ std::string get_status_name(enum status status)
     return "Timeout";
   case MISSING:
     return "Missing";
+  case FLAKE:
+    return "Flake";
   default:
     abort();
   }
@@ -471,6 +474,39 @@ void update_results(Context &ctx, std::map<std::string, enum status> results) {
   ctx.finished_cases += results.size();
 }
 
+void test_for_flakes(const Context &ctx, unsigned thread_id,
+                     const std::set<std::string>& tests,
+                     std::map<std::string, enum status> *results) {
+  bool has_failures = false;
+  for (auto&& e : *results) {
+    switch(e.second) {
+    case PASS:
+    case UNEXPECTEDPASS:
+    case MISSING:
+      break;
+    default:
+      has_failures = true;
+      break;
+    }
+  }
+
+  if (!has_failures)
+    return;
+
+  std::map<std::string, enum status> retry_results;
+  run_block(ctx, thread_id, tests, &retry_results);
+
+  assert(retry_results.size() == results->size());
+  for (auto& e : *results) {
+    auto it = retry_results.find(e.first);
+
+    assert (it != retry_results.end());
+
+    if (e.second != it->second)
+      e.second = FLAKE;
+  }
+}
+
 bool process_block(Context &context, unsigned thread_id) {
   auto tests = grab_tests(context);
   if (tests.empty())
@@ -557,6 +593,7 @@ usage(char *progname)
   std::cerr << "    [--exclude-tests <regex,regex,...>]\n";
   std::cerr << "    [--job <threadcount>]\n";
   std::cerr << "    [--device <vk device id>]\n";
+  std::cerr << "    [--allow-flakes true/false]\n";
   std::cerr << "    [-- --deqp-binary-arguments]\n";
   std::cerr << "\n";
 
@@ -720,6 +757,10 @@ int main(int argc, char *argv[]) {
     case SKIP:
     case XFAIL:
       break;
+    case FLAKE:
+      if (args.find("allow-flakes") != args.end() && args.find("allow-flakes")->second == "true")
+        break;
+      /* Fallthrough */
     default:
       if (ctx.status_counts[i] != 0)
         return 1;
