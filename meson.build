@@ -6,8 +6,8 @@ thread_dep = dependency('threads')
 vulkan_dep = dependency('vulkan')
 fs_dep = cpp.find_library('stdc++fs')
 
-cts_runner = executable('vulkan-cts-runner',
-           'src/vulkan-cts-runner.cc',
+cts_runner = executable('cts-runner',
+           'src/cts-runner.cc',
            dependencies : [thread_dep, fs_dep],
            install : true)
 
