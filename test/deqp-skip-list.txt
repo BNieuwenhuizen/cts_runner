@@ -1,4 +1,0 @@
-# Make sure we allow comments and empty lines
-
-# Now, an actual skip.
-dEQP.*\.3

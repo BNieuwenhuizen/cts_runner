@@ -1,4 +1,0 @@
-dEQP-GLES2.functional.test.1,Pass
-dEQP-GLES2.functional.test.2,Pass
-dEQP-GLES2.functional.test.3,Fail
-dEQP-GLES2.functional.test.4,Pass
